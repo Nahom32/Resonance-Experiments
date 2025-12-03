@@ -17,8 +17,9 @@ import numpy as np
 import json
 import re
 from pathlib import Path
+import os
+import matplotlib.pyplot as plt  # ----------------------------------------------
 
-# ----------------------------------------------
 # CONFIG
 # ----------------------------------------------
 INPUT_FILE = "/Users/nahomsenay/Downloads/10_4231_R7RX991C/aviris_hyperspectral_data/19920612_AVIRIS_IndianPine_EW-line_R.tif"
@@ -152,7 +153,15 @@ eps = 1e-6
 # ----------------------------------------------
 # Compute vegetation indices
 # ----------------------------------------------
-
+b = {
+    "blue": 4,  # 429.43 nm
+    "green": 17,  # 557.49 nm   ← best green peak
+    "red": 29,  # 666.61 nm
+    "rededge": 38,  # 725.47 nm   ← sweet spot for RE indices
+    "nir": 45,  # 802.53 nm   ← classic NIR plateau
+    "swir1": 126,  # 1581.30 nm  ← for NDWI/NDMI (1600 nm type)
+    "swir2": 192,  # 2270.15 nm  ← for deeper water absorption
+}
 # NDVI
 NDVI = (NIR - RED) / (NIR + RED + eps)
 
@@ -161,6 +170,30 @@ PRI = (B531 - B570) / (B531 + B570 + eps)
 
 # MCARI
 MCARI = ((R700 - RED) - 0.2 * (R700 - R550)) / (R700 / (RED + eps) + eps)
+
+# Extract once (assuming `img` is your (rows, cols, 220) array)
+B = img[:, :, b["blue"] - 1]
+G = img[:, :, b["green"] - 1]
+R = img[:, :, b["red"] - 1]
+RE = img[:, :, b["rededge"] - 1]
+NIR = img[:, :, b["nir"] - 1]
+SWIR1 = img[:, :, b["swir1"] - 1]
+SWIR2 = img[:, :, b["swir2"] - 1]
+
+gndvi = (NIR - G) / (NIR + G + 1e-8)
+ndre = (NIR - RE) / (NIR + RE + 1e-8)
+mtci = (NIR - RE) / (RE - R + 1e-8)
+cire = NIR / RE - 1
+cig = NIR / G - 1
+evi = 2.5 * (NIR - R) / (NIR + 6 * R - 7.5 * B + 1 + 1e-8)
+savi = 1.5 * (NIR - R) / (NIR + R + 0.5 + 1e-8)
+osavi = (NIR - R) / (NIR + R + 0.16 + 1e-8)
+ndwi_1600 = (NIR - SWIR1) / (NIR + SWIR1 + 1e-8)
+ndwi_2200 = (NIR - SWIR2) / (NIR + SWIR2 + 1e-8)
+vari = (G - R) / (G + R - B + 1e-8)
+tgi = -0.5 * (190 * (R - G) - 120 * (R - B))
+ccci = ndre / ((NIR - R) / (NIR + R + 1e-8))  # NDRE / NDVI
+cvi = (NIR * R) / (G**2 + 1e-6)
 
 
 # ----------------------------------------------
@@ -185,8 +218,68 @@ def save_raster(filename, arr):
 # ----------------------------------------------
 # Save results
 # ----------------------------------------------
-save_raster(OUTPUT_NDVI, NDVI)
-save_raster(OUTPUT_PRI, PRI)
-save_raster(OUTPUT_MCARI, MCARI)
+# save_raster(OUTPUT_NDVI, NDVI)
+# save_raster(OUTPUT_PRI, PRI)
+# save_raster(OUTPUT_MCARI, MCARI)
+# os.makedirs("indices", exist_ok=True)
 
+# Your dictionary of already-computed indices (2D numpy arrays)
+indices = {
+    "GNDVI": gndvi,
+    "NDVI": NDVI,
+    "NDRE": ndre,
+    "MTCI": mtci,
+    "CIre": cire,
+    "CIg": cig,
+    "EVI": evi,
+    "SAVI": savi,
+    "OSAVI": osavi,
+    "NDWI_1600": ndwi_1600,
+    "NDWI_2200": ndwi_2200,
+    "VARI": vari,
+    "TGI": tgi,
+    "CCCI": ccci,
+    "CVI": cvi,
+}
+
+colormaps = {
+    "NDVI": "RdYlGn",
+    "GNDVI": "RdYlGn",
+    "NDRE": "plasma",
+    "MTCI": "viridis",
+    "CIre": "magma",
+    "CIg": "cividis",
+    "EVI": "RdYlGn",
+    "SAVI": "RdYlGn",
+    "OSAVI": "RdYlGn",
+    "NDWI_1600": "Blues_r",
+    "NDWI_2200": "Blues_r",
+    "VARI": "RdBu",
+    "TGI": "RdYlGn_r",
+    "CCCI": "turbo",
+}
+
+os.makedirs("indices_pretty", exist_ok=True)
+
+for name, array in indices.items():
+    clean = np.nan_to_num(array, nan=np.nan)  # keep actual NaN, not -9999 for plotting
+
+    plt.figure(figsize=(10, 8))
+    cmap = colormaps.get(name, "viridis")  # fallback
+    vmin = np.nanpercentile(clean, 2)
+    vmax = np.nanpercentile(clean, 98)
+
+    plt.imshow(clean, cmap=cmap, vmin=vmin, vmax=vmax)
+    plt.title(name, fontsize=20)
+    plt.axis("off")
+    plt.colorbar(shrink=0.7, label=name)
+
+    out_png = f"indices_pretty/{name}.png"
+    plt.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="black")
+    plt.close()
+
+    # Also save a beautiful stretched GeoTIFF (8-bit) for QGIS
+    stretched = np.interp(clean, (vmin, vmax), (1, 255)).astype("uint8")
+    filename = f"indices_pretty/{name}_8bit.tif"
+    save_raster(filename, stretched)
 print("✓ Completed vegetation index extraction successfully.")
