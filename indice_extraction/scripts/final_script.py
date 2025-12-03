@@ -15,6 +15,8 @@ This script:
 import rasterio
 import numpy as np
 import json
+import re
+from pathlib import Path
 
 # ----------------------------------------------
 # CONFIG
@@ -23,6 +25,51 @@ INPUT_FILE = "/Users/nahomsenay/Downloads/10_4231_R7RX991C/aviris_hyperspectral_
 OUTPUT_NDVI = "NDVI.tif"
 OUTPUT_PRI = "PRI.tif"
 OUTPUT_MCARI = "MCARI.tif"
+METADATA_FILE = "/Users/nahomsenay/Downloads/10_4231_R7RX991C/documentation/Calibration_Information_for_220_Channel_Data_Band_Set.txt"
+
+
+def load_aviris_1992_wavelengths(calib_file: str = METADATA_FILE):
+    """
+    Parses the 1992 AVIRIS 220-channel calibration text file and returns:
+        wavelengths: np.array of shape (220,) with center wavelengths in nm
+                     (NaN for the 5 bad/"not used" bands)
+        good_bands: boolean mask (True = valid band)
+        channel_to_band: mapping from data channel (0..219) → original AVIRIS band number
+    """
+    text = Path(calib_file).read_text()
+
+    wavelengths = np.full(220, np.nan, dtype=float)
+
+    # Regex to catch lines like:
+    #   14      13     517.98    10.05       1.00            0.50
+    pattern = re.compile(
+        r"^\s*\d+\s+"  # AVIRIS Band # (ignored)
+        r"(?:\((not used[^)]*)\)\s+|"  # either "(not used ...)"  OR
+        r"(\d+)\s+)"  # Data Channel #
+        r"([0-9.]+)\s+"  # Center Wavelength (nm)
+    )
+
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        # If it's a "not used" line
+        if match.group(1):  # "(not used ..."
+            continue
+
+        channel_str = match.group(2)
+        wl_str = match.group(3)
+
+        channel_idx = int(channel_str) - 1  # data channel 1..220 → 0..219
+        wavelength = float(wl_str)
+
+        wavelengths[channel_idx] = wavelength
+
+    good_bands = ~np.isnan(wavelengths)
+
+    return wavelengths, good_bands
+
 
 # ----------------------------------------------
 # Load AVIRIS Data
@@ -31,37 +78,46 @@ dataset = rasterio.open(INPUT_FILE)
 img = dataset.read()  # shape: (bands, H, W)
 print(f"Loaded: {img.shape[0]} bands, size {img.shape[1]}x{img.shape[2]}")
 
+
 # ----------------------------------------------
 # Extract wavelength list
 # ----------------------------------------------
 meta = dataset.tags()
-print(meta)
-if "wavelength" in meta:
-    wavelengths = json.loads(meta["wavelength"])
-elif "WAVELENGTH" in meta:
-    wavelengths = json.loads(meta["WAVELENGTH"])
-elif dataset.descriptions:
-    # try parsing descriptions
-    wavelengths = []
-    for d in dataset.descriptions:
-        if d is not None and "nm" in d.lower():
-            # expected format: "Wavelength=531.02 nm"
-            w = "".join(c for c in d if c.isdigit() or c == ".")
-            wavelengths.append(float(w))
-else:
-    raise Exception("❗ No wavelength metadata found. Check .hdr file.")
+print(f"The meta file is: {meta}")
+# if "wavelength" in meta:
+#    wavelengths = json.loads(meta["wavelength"])
+# elif "WAVELENGTH" in meta:
+#    wavelengths = json.loads(meta["WAVELENGTH"])
+# elif dataset.descriptions:
+#    # try parsing descriptions
+#    wavelengths = []
+#    for d in dataset.descriptions:
+#        if d is not None and "nm" in d.lower():
+#            # expected format: "Wavelength=531.02 nm"
+#            w = "".join(c for c in d if c.isdigit() or c == ".")
+#            wavelengths.append(float(w))
+# else:
+#    raise Exception("❗ No wavelength metadata found. Check .hdr file.")
+#
+# wavelengths = np.array(wavelengths)
+# print("Found wavelength list for all bands.")
+# print(wavelengths)
 
-wavelengths = np.array(wavelengths)
-print("Found wavelength list for all bands.")
-print(wavelengths)
+wavelengths, good_mask = load_aviris_1992_wavelengths()
 
 
 # ----------------------------------------------
 # wavelength lookup helper
 # ----------------------------------------------
-def find_band(target):
-    """Return index of band closest to a wavelength."""
-    return int(np.argmin(np.abs(wavelengths - target)))
+def find_band(target_nm: float, name: str = "") -> int:
+    """Returns the closest valid band index (0..219)"""
+    diffs = np.abs(wavelengths - target_nm)
+    idx = int(np.argmin(diffs))
+
+    if np.isnan(wavelengths[idx]):
+        raise ValueError(f"No valid band near {target_nm} nm ({name})")
+
+    return idx
 
 
 # ----------------------------------------------
