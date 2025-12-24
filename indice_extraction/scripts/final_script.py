@@ -80,30 +80,6 @@ img = dataset.read()  # shape: (bands, H, W)
 print(f"Loaded: {img.shape[0]} bands, size {img.shape[1]}x{img.shape[2]}")
 
 
-# ----------------------------------------------
-# Extract wavelength list
-# ----------------------------------------------
-meta = dataset.tags()
-print(f"The meta file is: {meta}")
-# if "wavelength" in meta:
-#    wavelengths = json.loads(meta["wavelength"])
-# elif "WAVELENGTH" in meta:
-#    wavelengths = json.loads(meta["WAVELENGTH"])
-# elif dataset.descriptions:
-#    # try parsing descriptions
-#    wavelengths = []
-#    for d in dataset.descriptions:
-#        if d is not None and "nm" in d.lower():
-#            # expected format: "Wavelength=531.02 nm"
-#            w = "".join(c for c in d if c.isdigit() or c == ".")
-#            wavelengths.append(float(w))
-# else:
-#    raise Exception("❗ No wavelength metadata found. Check .hdr file.")
-#
-# wavelengths = np.array(wavelengths)
-# print("Found wavelength list for all bands.")
-# print(wavelengths)
-
 wavelengths, good_mask = load_aviris_1992_wavelengths()
 
 
@@ -259,27 +235,30 @@ colormaps = {
     "CCCI": "turbo",
 }
 
-os.makedirs("indices_pretty", exist_ok=True)
+if __name__ == "__main__":
+    os.makedirs("indices_pretty", exist_ok=True)
 
-for name, array in indices.items():
-    clean = np.nan_to_num(array, nan=np.nan)  # keep actual NaN, not -9999 for plotting
+    for name, array in indices.items():
+        clean = np.nan_to_num(
+            array, nan=np.nan
+        )  # keep actual NaN, not -9999 for plotting
 
-    plt.figure(figsize=(10, 8))
-    cmap = colormaps.get(name, "viridis")  # fallback
-    vmin = np.nanpercentile(clean, 2)
-    vmax = np.nanpercentile(clean, 98)
+        plt.figure(figsize=(10, 8))
+        cmap = colormaps.get(name, "viridis")  # fallback
+        vmin = np.nanpercentile(clean, 2)
+        vmax = np.nanpercentile(clean, 98)
 
-    plt.imshow(clean, cmap=cmap, vmin=vmin, vmax=vmax)
-    plt.title(name, fontsize=20)
-    plt.axis("off")
-    plt.colorbar(shrink=0.7, label=name)
+        plt.imshow(clean, cmap=cmap, vmin=vmin, vmax=vmax)
+        plt.title(name, fontsize=20)
+        plt.axis("off")
+        plt.colorbar(shrink=0.7, label=name)
 
-    out_png = f"indices_pretty/{name}.png"
-    plt.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="black")
-    plt.close()
+        out_png = f"indices_pretty/{name}.png"
+        plt.savefig(out_png, dpi=300, bbox_inches="tight", facecolor="black")
+        plt.close()
 
-    # Also save a beautiful stretched GeoTIFF (8-bit) for QGIS
-    stretched = np.interp(clean, (vmin, vmax), (1, 255)).astype("uint8")
-    filename = f"indices_pretty/{name}_8bit.tif"
-    save_raster(filename, stretched)
-print("✓ Completed vegetation index extraction successfully.")
+        # Also save a beautiful stretched GeoTIFF (8-bit) for QGIS
+        stretched = np.interp(clean, (vmin, vmax), (1, 255)).astype("uint8")
+        filename = f"indices_pretty/{name}_8bit.tif"
+        save_raster(filename, stretched)
+    print("✓ Completed vegetation index extraction successfully.")
